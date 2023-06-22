@@ -1,0 +1,12 @@
+# This is inventory file defined master and workers nodes
+
+[master]
+k8s-master.example.com new_hostname=k8s-master.example.com ansible_host=192.168.57.3 ansible_user=jakir ansible_connection=ssh ansible_password=toor@88
+
+[workers]
+k8s-worker1.example.com new_hostname=k8s-worker1.example.com ansible_host=192.168.57.4 ansible_user=jakir ansible_connection=ssh ansible_password=toor@88
+#worker2 ansible_host= {{ worker_node2 }} ansible_user="{{ ssh_user }}" ansible_connection=ssh ansible_password="{{ ssh_password }}"
+
+; [k8s-cls-vms]
+; master new_hostname=k8s-master.example.com
+; worker1 new_hostname=k8s-worker1.example.com
