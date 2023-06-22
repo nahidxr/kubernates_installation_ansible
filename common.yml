@@ -1,0 +1,152 @@
+# This yaml file is defined for configuring with dependencies for master and workers node.  
+
+- name: Change hostname for master and workers node 
+  hosts: "master, workers"
+  vars_files:
+  - ./env.yml
+  gather_facts: no
+  tasks:
+  - name: changing hostname for master node
+    hostname:
+      name: "{{ item }}"
+    with_items:
+      - "{{ new_hostname }}"
+    become: true
+
+  - name: Adding maste node in /etc/hosts file 
+    lineinfile: 
+      dest: /etc/hosts
+      regexp: '.*{{ item }}$'
+      line: "{{ hostvars[item].ansible_host }} {{item}}"
+      state: present
+    when: hostvars[item].ansible_host is defined
+    with_items: "{{ groups.all }}"
+    become: true
+
+  - name: Disable swarm in /etc/fstabe
+    shell: sed -i '/swap/s/^/#/g' /etc/fstab && swapoff -a
+    become: true
+
+  - name: Stop and disable firewalld serivces 
+    shell: systemctl stop ufw && systemctl disable ufw
+    become: true
+
+  - name: Installing dependency packages in master and workers node
+    apt:
+      name: "{{ item }}"
+      state: present
+    with_items: "{{ pre_packages }}"
+    become: true
+
+  - name: apt-get update
+    apt:
+      update_cache: yes
+    become: true
+
+  - name: Adding Docker official GPG key
+    shell:
+      cmd: |
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    become: true
+
+  - name: Setting up the docker repo
+    shell: 
+      cmd: | 
+        echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+        $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    become: true
+      
+  - name: apt-get update 
+    apt:
+      update_cache: yes
+    become: true
+
+  - name: Installing docker in master and workers node
+    apt: 
+      name: "{{ item }}"
+      state: present
+    with_items: "{{ docker_packages }}"
+    become: true
+
+  - name: creating daemon.json file 
+    shell: 
+      cmd: |
+        cat > /etc/docker/daemon.json << EOF 
+        {
+        "exec-opts": ["native.cgroupdriver=systemd"],
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "100m"
+        },
+        "storage-driver": "overlay2",
+        "storage-opts": [
+        "overlay2.override_kernel_check=true"
+        ],
+        "dns": ["8.8.8.8", "8.8.4.4"]
+        }
+        EOF
+    become: true
+
+  - name: Creating systemd file start and enable docker daemon 
+    shell: 
+      cmd: |
+        systemctl daemon-reload
+        systemctl restart docker
+        systemctl enable docker
+    become: true
+
+  - name: Adding user into Docker Group
+    shell: usermod -aG docker $USER
+    become: true
+
+  - name: Configuring load_module 
+    shell:
+      cmd: |
+        cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+        overlay
+        br_netfilter
+        EOF
+        modprobe overlay
+        modprobe br_netfilter
+    become: true
+
+  - name: Download the Google Cloud public signing key
+    shell: curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+    become: true
+
+  Installing Kubernetes components in master and workers node
+  - name: Add the Kubernetes apt repository
+    shell: 
+      cmd: | 
+        echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+    become: true
+
+  - name: Installing Kubeadm, kubeclt and kubelet
+    apt:
+      update_cache: yes
+      name: "{{ item }}"
+      state: present
+      force: true
+    with_items: "{{ kube_packages }}"
+    become: true
+
+  - name: Enable kubelet
+    shell:
+      cmd: |
+        apt-mark hold kubelet kubeadm kubectl
+    become: true
+
+  - name: Create kubernetes network file to configure system configuration
+    shell:
+      cmd: |
+        cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+        net.bridge.bridge-nf-call-iptables  = 1
+        net.bridge.bridge-nf-call-ip6tables = 1
+        net.ipv4.ip_forward                 = 1
+        EOF
+        sysctl --system
+    become: true
+
+# Next Intializing Kubernetes cluster in Master node 
